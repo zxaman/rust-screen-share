@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#141c23" />
+    <title>Nodeport · Device workspace</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <aside>
+      <div class="brand">
+        <svg viewBox="0 0 40 40" aria-hidden="true">
+          <path
+            fill="#86dfb1"
+            d="m20 1 16 9-8 5-8-5-8 5-8-5zM4 14l8 5v9l8 5v8L4 32zm32 0v18l-12 7v-9l4-2v-9z"
+          />
+          <path fill="#d3ffe2" d="m16 18 5-3 5 3-5 3z" /></svg
+        >Nodeport
+      </div>
+      <div class="navscroll"><div id="nav"></div></div>
+      <div class="sidefoot">
+        <span class="dot"></span> Local workspace <small>v0.1</small>
+      </div>
+    </aside>
+    <div class="shell">
+      <header>
+        <div class="crumb">
+          <button class="icon mobile" data-act="menu" aria-label="Navigation">
+            <i data-icon="menu"></i></button
+          ><i data-icon="panels-top-left"></i><span>Workspace</span><b>/</b
+          ><strong id="crumb"></strong>
+        </div>
+        <div class="tools">
+          <span class="secure"><span class="dot"></span> Local network</span
+          ><button
+            class="icon bell"
+            data-act="alerts"
+            aria-label="Notifications"
+          >
+            <i data-icon="bell"></i></button
+          ><button
+            class="avatar"
+            data-act="profile"
+            aria-label="Workspace profile"
+          >
+            JD
+          </button>
+        </div>
+      </header>
+      <main id="main"></main>
+    </div>
+    <dialog id="dialog" aria-labelledby="dialog-title"><div id="modal"></div></dialog>
+    <div id="toast" role="status"></div>
+    <script src="app.js"></script>
+  </body>
+</html>
