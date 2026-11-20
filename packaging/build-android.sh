@@ -9,10 +9,23 @@ bt="$ANDROID_HOME/build-tools/${BUILD_TOOLS_VERSION:-35.0.0}"
 platform="$ANDROID_HOME/platforms/android-35/android.jar"
 work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
 mkdir -p "$work"/{assets,classes,dex} dist
-python3 packaging/bundle.py "$work/assets/workspace.html"
-javac -source 8 -target 8 -bootclasspath "$platform" -d "$work/classes" apps/android/src/io/nodeport/preview/MainActivity.java
-"$bt/d8" --lib "$platform" --min-api 28 --output "$work/dex" "$work"/classes/io/nodeport/preview/*.class
-"$bt/aapt2" link -I "$platform" --manifest apps/android/AndroidManifest.xml -A "$work/assets" -o "$work/unsigned.apk"
+case "${1:-demo}" in
+  link)
+    cp apps/android/vendor/NOTICE.txt "$work/assets/NOTICE.txt"
+    manifest=apps/android/LinkManifest.xml
+    sources=(apps/android/src/io/nodeport/link/*.java apps/android/vendor/io/nayuki/qrcodegen/*.java)
+    artifact=dist/Nodeport-Link-Android.apk ;;
+  demo)
+    python3 packaging/bundle.py "$work/assets/workspace.html"
+    manifest=apps/android/AndroidManifest.xml
+    sources=(apps/android/src/io/nodeport/preview/*.java)
+    artifact=dist/Nodeport-Android.apk ;;
+  *) echo "Usage: $0 [link|demo]" >&2; exit 2 ;;
+esac
+javac -source 8 -target 8 -classpath "$platform" -d "$work/classes" "${sources[@]}"
+(cd "$work/classes" && jar cf "$work/classes.jar" .)
+"$bt/d8" --lib "$platform" --min-api 28 --output "$work/dex" "$work/classes.jar"
+"$bt/aapt2" link -I "$platform" --manifest "$manifest" -A "$work/assets" -o "$work/unsigned.apk"
 python3 - "$work" <<'PY'
 from pathlib import Path
 from zipfile import ZipFile, ZIP_DEFLATED
@@ -24,5 +37,5 @@ PY
 "$bt/zipalign" -f 4 "$work/unsigned.apk" "$work/aligned.apk"
 # Prompt for passwords; never put a key or password in the repository.
 "$bt/apksigner" sign --ks "$NODEPORT_KEYSTORE" --ks-key-alias "$NODEPORT_KEY_ALIAS" \
-    --v4-signing-enabled false --out dist/Nodeport-Android.apk "$work/aligned.apk"
-"$bt/apksigner" verify --verbose --print-certs dist/Nodeport-Android.apk
+    --v4-signing-enabled false --out "$artifact" "$work/aligned.apk"
+"$bt/apksigner" verify --verbose --print-certs "$artifact"
