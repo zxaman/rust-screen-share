@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/core-engine", "crates/transport-layer"]
+resolver = "2"
