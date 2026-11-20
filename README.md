@@ -6,10 +6,10 @@ A first milestone for a Rust-powered, permission-based device management platfor
 
 | Platform | Download | How it runs |
 | --- | --- | --- |
-| Windows 10/11, x64 | [Nodeport-Windows-x64.exe](https://github.com/zxaman/rust-screen-share/releases/download/v0.1.0-preview.1/Nodeport-Windows-x64.exe) | Run the portable launcher to open the offline dashboard in your default browser. No administrator access or installation required. |
-| Android 9 or newer | [Nodeport-Android.apk](https://github.com/zxaman/rust-screen-share/releases/download/v0.1.0-preview.1/Nodeport-Android.apk) | Install the preview APK and open **Nodeport Preview**. Uses Android System WebView; no network or device-access permissions. |
+| Windows 10/11, x64 | [Nodeport-Windows-x64.exe](https://github.com/zxaman/rust-screen-share/raw/refs/tags/v0.1.0-preview.1/downloads/Nodeport-Windows-x64.exe) | Run the portable launcher to open the offline dashboard in your default browser. No administrator access or installation required. |
+| Android 9 or newer | [Nodeport-Android.apk](https://github.com/zxaman/rust-screen-share/raw/refs/tags/v0.1.0-preview.1/downloads/Nodeport-Android.apk) | Install the preview APK and open **Nodeport Preview**. Uses Android System WebView; no network or device-access permissions. |
 
-[Release notes](https://github.com/zxaman/rust-screen-share/releases/tag/v0.1.0-preview.1) · [SHA-256 checksums](https://github.com/zxaman/rust-screen-share/releases/download/v0.1.0-preview.1/SHA256SUMS.txt) · [Build from source](packaging/README.md)
+[Release notes](https://github.com/zxaman/rust-screen-share/releases/tag/v0.1.0-preview.1) · [SHA-256 checksums](https://github.com/zxaman/rust-screen-share/raw/refs/tags/v0.1.0-preview.1/downloads/SHA256SUMS.txt) · [Build from source](packaging/README.md)
 
 These packages contain the **simulated workspace**, not a remote-control agent. The Windows launcher is not Authenticode-signed and may show a publisher warning. The Android APK is sideloaded and signed with a preview-only certificate; a differently signed future build requires uninstalling this preview first. Verify your download against the checksums (PowerShell: `Get-FileHash .\Nodeport-Windows-x64.exe -Algorithm SHA256`; Linux: `sha256sum Nodeport-Android.apk`).
 
