@@ -4,10 +4,12 @@
 
 | Platform | Download | What opens |
 | --- | --- | --- |
-| Android 9+ | [Download Nodeport-Link-Android.apk](downloads/Nodeport-Link-Android.apk?raw=true) | **Nearby devices**, with **Scan for nearby devices** and **Receive a request** |
-| Windows 10/11 x64 | [Download Nodeport-Link-Windows-x64.exe](downloads/Nodeport-Link-Windows-x64.exe?raw=true) | **NODEPORT LINK 0.3**, with **Host**, **Scan** and **Connect directly** |
+| Android 9+ | [Download native Nodeport Link 0.3 APK](https://github.com/zxaman/rust-screen-share/raw/2c2bad368c3c4f978cfa113c1ecf28b268754bc3/downloads/Nodeport-Link-Android.apk) | **Nearby devices**, with **Scan for nearby devices** and **Receive a request** |
+| Windows 10/11 x64 | [Download native Nodeport Link 0.3 EXE](https://github.com/zxaman/rust-screen-share/raw/2c2bad368c3c4f978cfa113c1ecf28b268754bc3/downloads/Nodeport-Link-Windows-x64.exe) | **NODEPORT LINK 0.3**, with **Host**, **Scan** and **Connect directly** |
 
-[SHA-256 checksums](downloads/LINK-SHA256SUMS.txt) · [Build instructions](packaging/README.md) · [Pairing, security and test details](packaging/link.md)
+[SHA-256 checksums](https://github.com/zxaman/rust-screen-share/raw/2c2bad368c3c4f978cfa113c1ecf28b268754bc3/downloads/LINK-SHA256SUMS.txt) · [Build instructions](packaging/README.md) · [Pairing, security and test details](packaging/link.md)
+
+**Check the Android install:** The installer should say **Nodeport Link** (version `0.3.0-lan.1`, package `io.nodeport.link`). Tap **Open** from the installer to launch the app you just installed. **Nodeport Preview** (`io.nodeport.preview`) is a separate app and can still be on your home screen.
 
 **Already installed a preview?** If you see “Workspace overview” or pre-filled device cards, you opened **Nodeport Preview**, not Link. Remove that app/launcher. If Android refuses to update an older **Link** APK due to its different preview signer, uninstall the old Link app before installing this build. The Windows EXE is not Authenticode-signed.
 
