@@ -76,8 +76,8 @@ func TestConsentAndRevocation(t *testing.T) {
 			}()
 			bad := dial(t, l.Addr().String(), v)
 			fmt.Fprintln(bad, "NP1 invalid 000000")
-			if _, e := bufio.NewReader(bad).ReadByte(); e == nil {
-				t.Fatal("invalid key accepted")
+			if reply, e := readLine(bufio.NewReader(bad)); e != nil || reply != "BAD_INVITE" {
+				t.Fatal("invalid key was not rejected")
 			}
 			bad.Close()
 			c := dial(t, l.Addr().String(), v)

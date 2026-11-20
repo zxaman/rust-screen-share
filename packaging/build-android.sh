@@ -12,8 +12,10 @@ mkdir -p "$work"/{assets,classes,dex} dist
 case "${1:-link}" in
   link)
     cp apps/android/vendor/NOTICE.txt "$work/assets/NOTICE.txt"
+    cp apps/android/vendor/zxing/LICENSE "$work/assets/ZXING-LICENSE.txt"
     manifest=apps/android/LinkManifest.xml
     sources=(apps/android/src/io/nodeport/link/*.java apps/android/vendor/io/nayuki/qrcodegen/*.java)
+    while IFS= read -r -d '' f; do sources+=("$f"); done < <(find apps/android/vendor/zxing -name '*.java' -print0)
     artifact=dist/Nodeport-Link-Android.apk ;;
   demo)
     python3 packaging/bundle.py "$work/assets/workspace.html"

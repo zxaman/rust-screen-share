@@ -15,11 +15,12 @@ if sorted(sums) != sorted(f'{sha256((files / name).read_bytes()).hexdigest()}  {
 with ZipFile(files / apk) as z:
     dex = z.read('classes.dex')
     if (not dex.startswith(b'dex\n') or b'Lio/nodeport/link/LinkActivity;' not in dex
+            or b'Lio/nodeport/link/ScanActivity;' not in dex or b'SCREEN_CLICK' not in dex
             or b'NP-HOST/1' not in dex or b'Landroid/webkit/WebView;' in dex
             or any(p.endswith('.html') for p in z.namelist())):
         raise SystemExit('Unexpected Android payload')
 pe = (files / exe).read_bytes()
 offset, = unpack_from('<I', pe, 0x3c)
-if pe[:2] != b'MZ' or pe[offset:offset+6] != b'PE\0\0\x64\x86' or b'NP-HOST/1' not in pe:
+if pe[:2] != b'MZ' or pe[offset:offset+6] != b'PE\0\0\x64\x86' or b'NP-HOST/1' not in pe or b'CreateDIBSection' not in pe or b'SendInput' not in pe:
     raise SystemExit('Expected native x64 discovery client')
 print('Native Link packages and checksums verified')

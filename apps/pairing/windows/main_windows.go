@@ -15,12 +15,12 @@ import (
 var user32 = syscall.NewLazyDLL("user32.dll")
 
 // The native owner prompt is separate from the controller and defaults to No.
-func askOwner(p context.Context, peer, code string) bool {
-	fmt.Printf("\aIncoming volume-control request from %s. Compare %s and answer the Windows prompt.\n", peer, code)
+func askOwner(p context.Context, peer, code, grant string) bool {
+	fmt.Printf("\aIncoming request from %s for %s. Compare %s and answer the Windows prompt.\n", peer, grant, code)
 	result := make(chan bool, 1)
 	go func() {
 		caption, _ := syscall.UTF16PtrFromString("Nodeport Link — Pair request")
-		msg, _ := syscall.UTF16PtrFromString(fmt.Sprintf("%s requests volume up/down control of this PC.\n\nDoes the phone show %s? Choose No if you did not expect this request.\n\nAllow this session?", peer, code))
+		msg, _ := syscall.UTF16PtrFromString(fmt.Sprintf("%s requests: %s.\n\nDoes the phone show %s? Choose No if you did not expect this request.\n\nAllow this session?", peer, grant, code))
 		button, _, _ := user32.NewProc("MessageBoxW").Call(0, uintptr(unsafe.Pointer(msg)), uintptr(unsafe.Pointer(caption)), 0x04|0x20|0x100|0x10000|0x40000)
 		result <- button == 6 // IDYES; all other results fail closed
 	}()
@@ -85,7 +85,8 @@ func control(in *bufio.Scanner, selected *net.TCPAddr) {
 	fmt.Println("Disconnected.")
 }
 func main() {
-	fmt.Println("NODEPORT LINK 0.3  |  Nearby devices\n1. Host — receive a request on this PC\n2. Scan nearby Nodeport hosts\n3. Connect directly with a key")
+	user32.NewProc("SetProcessDPIAware").Call()
+	fmt.Println("NODEPORT LINK 0.4  |  Nearby devices\n1. Host — receive a request on this PC\n2. Scan nearby Nodeport hosts\n3. Connect directly with a key")
 	in := bufio.NewScanner(os.Stdin)
 	fmt.Print("Choose 1, 2 or 3: ")
 	if !in.Scan() {
@@ -127,7 +128,7 @@ func main() {
 	ip := lan.IP
 	if mode == "2" {
 		for {
-			fmt.Println("Listening for Nodeport hosts for four seconds on", ip)
+			fmt.Println("Listening for Nodeport hosts for six seconds on", ip)
 			ps, e := scan(lan)
 			if e != nil {
 				fmt.Println("Discovery failed:", e)
@@ -191,7 +192,31 @@ func main() {
 			fmt.Println("Not advertising; manual key still works:", err)
 		}
 	}()
-	e = serve(ctx, l, v, func(p context.Context, peer, code string) bool { stopAds(); return askOwner(p, peer, code) }, adjust, func(peer string) { fmt.Printf("\nACTIVE: %s can change volume. Type STOP to revoke.\n", peer) })
+	go showQR(ads, v.key)
+	desktop := &desktop{}
+	screen := &screenAdapter{capture: desktop.capture, click: desktop.click,
+		approve: func(p context.Context, peer, code, scope string) bool {
+			stopAds()
+			grant := "view your entire primary display (no input)"
+			if scope == "SCREEN_CLICK" {
+				grant = "view your entire primary display AND left-click applications as you"
+			}
+			return askOwner(p, peer, code, grant)
+		},
+		started: func(peer, scope string) {
+			fmt.Printf("ACTIVE: %s — %s. Type STOP or close this window to revoke.\n", peer, scope)
+			go func() {
+				caption, _ := syscall.UTF16PtrFromString("Nodeport Link — sharing active")
+				msg, _ := syscall.UTF16PtrFromString("Sharing your primary display with " + peer + " (" + scope + "). Choose OK to stop sharing now.")
+				user32.NewProc("MessageBoxW").Call(0, uintptr(unsafe.Pointer(msg)), uintptr(unsafe.Pointer(caption)), 0x40040)
+				cancel()
+			}()
+		},
+	}
+	e = serveWithScreen(ctx, l, v, func(p context.Context, peer, code string) bool {
+		stopAds()
+		return askOwner(p, peer, code, "volume up/down only")
+	}, adjust, func(peer string) { fmt.Printf("ACTIVE: %s can change volume. Type STOP to revoke.\n", peer) }, screen)
 	cancel()
 	fmt.Println("\nSharing stopped.")
 	if e != nil {

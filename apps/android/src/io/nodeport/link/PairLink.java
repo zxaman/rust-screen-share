@@ -123,7 +123,13 @@ final class PairLink {
     ui.invite(key(ip, listener.getLocalPort(), pin(cert), secret));
     for (int i = 0; i < 5; i++) {
       listener.setSoTimeout(left(expires, 120000));
-      SSLSocket sock = lease.track((SSLSocket) listener.accept());
+      SSLSocket sock;
+      try {
+        sock = lease.track((SSLSocket) listener.accept());
+      } catch (SocketTimeoutException expired) {
+        throw new IOException(
+            "Invitation expired. Tap Host this phone to create a fresh key.", expired);
+      }
       try {
         Lines io;
         String[] request;
@@ -132,10 +138,16 @@ final class PairLink {
           sock.startHandshake();
           io = new Lines(sock);
           request = io.read(Math.min(expires, now() + 5000)).split(" ", -1);
-          check(request.length == 3 && request[0].equals("NP1") && request[2].matches("[0-9]{6}"),
-              "Invalid request");
-          check(MessageDigest.isEqual(secret, Base64.getUrlDecoder().decode(request[1])),
-              "Invalid invitation");
+          check(request.length >= 3 && request[2].matches("[0-9]{6}"), "Invalid request");
+          if (!MessageDigest.isEqual(secret, Base64.getUrlDecoder().decode(request[1]))) {
+            io.send("BAD_INVITE");
+            continue;
+          }
+          if (request.length == 4 && request[0].equals("NP2")) {
+            io.send("UNSUPPORTED");
+            continue;
+          }
+          check(request.length == 3 && request[0].equals("NP1"), "Invalid request");
         } catch (IOException | IllegalArgumentException bad) {
           continue;
         }
@@ -171,12 +183,45 @@ final class PairLink {
     }
     throw new IOException("Too many invalid requests");
   }
-  static void join(Lease lease, String invite, Controller ui) throws Exception {
-    check(invite.matches("NP1-[A-Za-z0-9_-]{51}"), "Paste the complete NP1 device key");
+  // Ignore pasted line wrapping, not case: the base64url data is case-sensitive.
+  static String clean(String s) {
+    return s == null ? "" : s.replaceAll("[ \\t\\r\\n]", "");
+  }
+  static boolean validInvite(String s) {
+    if (s == null || !s.matches("NP1-[A-Za-z0-9_-]{51}"))
+      return false;
+    byte[] b = Base64.getUrlDecoder().decode(s.substring(4));
+    try {
+      return localIPv4(InetAddress.getByAddress(Arrays.copyOf(b, 4))) && (b[4] != 0 || b[5] != 0)
+          && ENCODE.encodeToString(b).equals(s.substring(4));
+    } catch (UnknownHostException impossible) {
+      return false;
+    }
+  }
+  interface Route {
+    void bind(Socket socket, InetAddress peer) throws IOException;
+  }
+  interface ScreenController extends Controller {
+    void frame(byte[] jpeg) throws Exception;
+    // At most one tap, produced by the visible image's touch listener.
+    String takeClick();
+  }
+  static void join(Lease lease, String key, Controller ui) throws Exception {
+    join(lease, key, "VOLUME", null, ui);
+  }
+  static void join(Lease lease, String key, String scope, Route route, Controller ui)
+      throws Exception {
+    String invite = clean(key);
+    check(validInvite(invite),
+        "Invalid key: paste or scan the full current NP1 key (55 case-sensitive characters).");
+    boolean screen = !scope.equals("VOLUME");
+    check(!screen
+            || (ui instanceof ScreenController
+                && (scope.equals("SCREEN") || scope.equals("SCREEN_CLICK"))),
+        "Unknown access request");
     byte[] b = Base64.getUrlDecoder().decode(invite.substring(4));
     InetAddress ip = InetAddress.getByAddress(Arrays.copyOf(b, 4));
     int port = ((b[4] & 255) << 8) | (b[5] & 255);
-    check(localIPv4(ip) && port != 0, "Not a private LAN invite");
     byte[] expected = Arrays.copyOfRange(b, 6, 22);
     X509TrustManager trust = new X509TrustManager() {
       public X509Certificate[] getAcceptedIssuers() {
@@ -196,18 +241,76 @@ final class PairLink {
     };
     SSLContext tls = SSLContext.getInstance("TLS");
     tls.init(null, new TrustManager[] {trust}, RANDOM);
-    SSLSocket sock = lease.track((SSLSocket) tls.getSocketFactory().createSocket());
+    Socket raw = lease.track(new Socket());
+    if (route != null)
+      route.bind(raw, ip);
+    try {
+      raw.connect(new InetSocketAddress(ip, port), 5000);
+    } catch (IOException e) {
+      throw new IOException("Cannot reach " + ip.getHostAddress() + ":" + port
+              + (". Keep the host open, use the same non-guest LAN and a fresh invitation. Check "
+                  + "the host firewall."),
+          e);
+    }
+    SSLSocket sock = lease.track(
+        (SSLSocket) tls.getSocketFactory().createSocket(raw, ip.getHostAddress(), port, true));
     sock.setEnabledProtocols(new String[] {"TLSv1.2"});
-    sock.connect(new InetSocketAddress(ip, port), 5000);
     sock.setSoTimeout(5000);
-    sock.startHandshake();
+    try {
+      sock.startHandshake();
+    } catch (SSLException e) {
+      throw new IOException(
+          "Could not authenticate the host. Scan its new invitation; do not reuse a key.", e);
+    }
     Lines io = new Lines(sock);
     String code = String.format(Locale.ROOT, "%06d", RANDOM.nextInt(1000000));
-    io.send("NP1 " + ENCODE.encodeToString(Arrays.copyOfRange(b, 22, 38)) + " " + code);
+    io.send((screen ? "NP2 " : "NP1 ") + ENCODE.encodeToString(Arrays.copyOfRange(b, 22, 38)) + " "
+        + code + (screen ? " " + scope : ""));
     ui.pending(code);
-    check(io.read(now() + 35000).equals("APPROVED VOLUME"), "Pairing denied");
+    String reply;
+    try {
+      reply = io.read(now() + 35000);
+    } catch (EOFException e) {
+      throw new IOException(screen
+              ? "No screen grant: use a 0.4 Windows host and its fresh key."
+              : "Host closed the request. Check that the key is current and complete.",
+          e);
+    }
+    check(!reply.equals("UNSUPPORTED"),
+        "This host does not share its screen. For screen access host on Windows 0.4.");
+    check(!reply.equals("BAD_INVITE"),
+        "Incorrect invitation secret. Scan the current QR or paste the exact case-sensitive key.");
+    check(reply.equals("APPROVED " + scope), "Pairing denied");
     ui.active(io);
     long end = now() + SESSION_MS;
+    if (screen) {
+      ScreenController viewer = (ScreenController) ui;
+      while (!lease.closed && now() < end) {
+        String cmd = viewer.takeClick();
+        if (cmd != null && scope.equals("SCREEN_CLICK")) {
+          io.send(cmd);
+          check(io.read(Math.min(end, now() + 5000)).equals("OK"), "Click not accepted");
+        }
+        io.send("FRAME");
+        String header = io.read(Math.min(end, now() + 10000));
+        check(header.matches("JPEG [1-9][0-9]{0,5}"), "Invalid frame header");
+        int n = Integer.parseInt(header.substring(5));
+        check(n <= 512 * 1024, "Frame too large");
+        byte[] frame = new byte[n];
+        int pos = 0;
+        long deadline = Math.min(end, now() + 10000);
+        while (pos < n) {
+          sock.setSoTimeout(left(deadline, 10000));
+          int count = io.in.read(frame, pos, n - pos);
+          if (count < 0)
+            throw new EOFException("Host stopped sharing");
+          pos += count;
+        }
+        viewer.frame(frame);
+        Thread.sleep(500);
+      }
+      return;
+    }
     while (!lease.closed) {
       String r = io.read(Math.min(end, now() + 65000));
       check(r.equals("OK") || r.equals("WAIT") || r.equals("FAILED"), "Unsupported response");

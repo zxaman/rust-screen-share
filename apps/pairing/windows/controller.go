@@ -11,16 +11,18 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"strings"
 	"time"
 )
 
 // The out-of-band key authenticates the host, never its advertised label or IP.
 func connectHost(key string, selected *net.TCPAddr, pending func(string)) (*tls.Conn, *bufio.Reader, error) {
+	key = strings.NewReplacer(" ", "", "\t", "", "\r", "", "\n", "").Replace(key)
 	if len(key) != 55 || key[:4] != "NP1-" {
 		return nil, nil, errors.New("enter the full NP1 device key")
 	}
 	b, e := b64.DecodeString(key[4:])
-	if e != nil || len(b) != 38 {
+	if e != nil || len(b) != 38 || b64.EncodeToString(b) != key[4:] {
 		return nil, nil, errors.New("invalid key")
 	}
 	addr := &net.TCPAddr{IP: net.IP(b[:4]), Port: int(binary.BigEndian.Uint16(b[4:6]))}
@@ -57,7 +59,11 @@ func connectHost(key string, selected *net.TCPAddr, pending func(string)) (*tls.
 		var reply string
 		reply, e = readLine(r)
 		if e == nil && reply != "APPROVED VOLUME" {
-			e = errors.New("owner denied or invitation ended")
+			if reply == "BAD_INVITE" {
+				e = errors.New("incorrect invitation secret; copy a fresh key")
+			} else {
+				e = errors.New("owner denied or invitation ended")
+			}
 		}
 	}
 	if e != nil {
