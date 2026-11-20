@@ -132,7 +132,7 @@ func TestJavaController(t *testing.T) {
 	if cp == "" {
 		t.Skip("set NODEPORT_TEST_CLASSES for cross-runtime test")
 	}
-	ip := net.IPv4(127, 0, 0, 1)
+	ip := net.IPv4(127, 0, 0, 2)
 	l, v := fixture(t, ip)
 	ctx, stop := context.WithTimeout(context.Background(), 10*time.Second)
 	defer stop()
@@ -146,6 +146,7 @@ func TestJavaController(t *testing.T) {
 			return nil
 		}, func(string) {})
 	}()
+	go advertise(ctx, &net.IPNet{IP: ip, Mask: net.CIDRMask(8, 32)}, l.Addr().(*net.TCPAddr).Port, "PC fixture")
 	cmd := exec.CommandContext(ctx, "java", "-cp", cp, "io.nodeport.link.ProtocolSmoke")
 	cmd.Stdin = strings.NewReader(v.key + "\n")
 	if out, e := cmd.CombinedOutput(); e != nil {

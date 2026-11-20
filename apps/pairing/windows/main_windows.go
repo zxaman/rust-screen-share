@@ -31,31 +31,132 @@ func askOwner(p context.Context, peer, code string) bool {
 		return false
 	}
 }
+func control(in *bufio.Scanner, selected *net.TCPAddr) {
+	fmt.Print("Paste the target owner’s private NP1 key: ")
+	if !in.Scan() {
+		return
+	}
+	c, r, e := connectHost(strings.TrimSpace(in.Text()), selected, func(code string) { fmt.Println("Compare", code, "with the owner. Waiting for approval…") })
+	if e != nil {
+		fmt.Println("Connection failed:", e)
+		fmt.Print("Check the private LAN, firewall and key expiry. Press Enter to exit. ")
+		in.Scan()
+		return
+	}
+	defer c.Close()
+	fmt.Println("Approved for volume only. Type UP, DOWN, or STOP, then Enter.")
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			reply, e := readLine(r)
+			if e != nil {
+				return
+			}
+			switch reply {
+			case "OK":
+				fmt.Println("Volume request accepted.")
+			case "WAIT":
+				fmt.Println("Wait briefly and try again.")
+			case "FAILED":
+				fmt.Println("The host could not change volume.")
+			default:
+				return
+			}
+		}
+	}()
+	go func() {
+		defer c.Close()
+		for in.Scan() {
+			cmd := strings.ToUpper(strings.TrimSpace(in.Text()))
+			switch cmd {
+			case "UP", "DOWN":
+				if _, e := fmt.Fprintln(c, cmd); e != nil {
+					return
+				}
+			case "STOP":
+				return
+			default:
+				fmt.Println("Use UP, DOWN or STOP.")
+			}
+		}
+	}()
+	<-done
+	fmt.Println("Disconnected.")
+}
 func main() {
-	fmt.Println("NODEPORT LINK  |  Windows volume host\nOnly start this on a trusted private LAN. Closing this window stops sharing.")
+	fmt.Println("NODEPORT LINK 0.3  |  Nearby devices\n1. Host — receive a request on this PC\n2. Scan nearby Nodeport hosts\n3. Connect directly with a key")
 	in := bufio.NewScanner(os.Stdin)
-	var ips []net.IP
+	fmt.Print("Choose 1, 2 or 3: ")
+	if !in.Scan() {
+		return
+	}
+	mode := strings.TrimSpace(in.Text())
+	if mode == "3" {
+		control(in, nil)
+		return
+	}
+	if mode != "1" && mode != "2" {
+		return
+	}
+	var lans []*net.IPNet
 	all, _ := net.InterfaceAddrs()
 	for _, a := range all {
 		if n, ok := a.(*net.IPNet); ok && n.IP.To4() != nil && n.IP.IsPrivate() {
-			ips = append(ips, n.IP.To4())
-			fmt.Printf("%d. %s\n", len(ips), n.IP)
+			lans = append(lans, n)
+			fmt.Printf("%d. %s\n", len(lans), n.IP)
 		}
 	}
-	if len(ips) == 0 {
+	if len(lans) == 0 {
 		fmt.Println("No private IPv4 interface. Connect to Wi-Fi or Ethernet. Press Enter to exit.")
 		in.Scan()
 		return
 	}
-	fmt.Print("Choose LAN interface number to create an invitation: ")
-	if !in.Scan() {
+	i := 1
+	if len(lans) > 1 {
+		fmt.Print("Choose LAN interface: ")
+		if !in.Scan() {
+			return
+		}
+		i, _ = strconv.Atoi(strings.TrimSpace(in.Text()))
+	}
+	if i < 1 || i > len(lans) {
 		return
 	}
-	i, e := strconv.Atoi(strings.TrimSpace(in.Text()))
-	if e != nil || i < 1 || i > len(ips) {
-		return
+	lan := lans[i-1]
+	ip := lan.IP
+	if mode == "2" {
+		for {
+			fmt.Println("Listening for Nodeport hosts for four seconds on", ip)
+			ps, e := scan(lan)
+			if e != nil {
+				fmt.Println("Discovery failed:", e)
+			} else if len(ps) == 0 {
+				fmt.Println("No hosts found. Open Receive a request on the target. Guest Wi-Fi may block discovery.")
+			} else {
+				for j, p := range ps {
+					fmt.Printf("%d. %s  (%s)\n", j+1, p.name, p.endpoint)
+				}
+			}
+			fmt.Print("Select number, R to rescan, K for direct key, or Enter to exit: ")
+			if !in.Scan() {
+				return
+			}
+			choice := strings.ToUpper(strings.TrimSpace(in.Text()))
+			if choice == "R" {
+				continue
+			}
+			if choice == "K" {
+				control(in, nil)
+				return
+			}
+			j, _ := strconv.Atoi(choice)
+			if j >= 1 && j <= len(ps) {
+				control(in, ps[j-1].endpoint)
+			}
+			return
+		}
 	}
-	ip := ips[i-1]
 	l, e := net.ListenTCP("tcp4", &net.TCPAddr{IP: ip})
 	if e != nil {
 		fmt.Println(e)
@@ -82,7 +183,15 @@ func main() {
 		cancel()
 	}()
 	fmt.Printf("\nOne-time device key (2 minutes):\n%s\n\nSend privately to the phone operator. Type STOP at any time.\n", v.key)
-	e = serve(ctx, l, v, askOwner, adjust, func(peer string) { fmt.Printf("\nACTIVE: %s can change volume. Type STOP to revoke.\n", peer) })
+	ads, stopAds := context.WithTimeout(ctx, inviteTTL)
+	defer stopAds()
+	name, _ := os.Hostname()
+	go func() {
+		if err := advertise(ads, lan, l.Addr().(*net.TCPAddr).Port, name); err != nil {
+			fmt.Println("Not advertising; manual key still works:", err)
+		}
+	}()
+	e = serve(ctx, l, v, func(p context.Context, peer, code string) bool { stopAds(); return askOwner(p, peer, code) }, adjust, func(peer string) { fmt.Printf("\nACTIVE: %s can change volume. Type STOP to revoke.\n", peer) })
 	cancel()
 	fmt.Println("\nSharing stopped.")
 	if e != nil {

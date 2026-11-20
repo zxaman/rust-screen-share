@@ -50,10 +50,29 @@ public final class ProtocolSmoke {
   }
   public static void main(String[] args) throws Exception {
     if (args.length == 0) {
-      control(new BufferedReader(new InputStreamReader(System.in)).readLine());
+      // The host advertises on loopback from .2; the logical controller is .1.
+      String key = new BufferedReader(new InputStreamReader(System.in)).readLine();
+      try (DatagramSocket sock = new DatagramSocket(LanDiscovery.PORT);
+          PairLink.Lease scan = new PairLink.Lease()) {
+        List<LanDiscovery.Peer> found =
+            LanDiscovery.collect(scan, sock, InetAddress.getByName("127.0.0.1"), 8, 1800);
+        require(found.size() == 1 && found.get(0).matches(key));
+      }
+      control(key);
+      return;
+    }
+    if (args[0].equals("announce")) {
+      try (PairLink.Lease scan = new PairLink.Lease()) {
+        LanDiscovery.announce(scan, new AtomicBoolean(true), InetAddress.getByName("127.0.0.2"),
+            InetAddress.getByName("127.255.255.255"), 4321, "Android fixture");
+      }
       return;
     }
     final InetAddress address = InetAddress.getByName("127.0.0.1");
+    try (DatagramSocket sock = new DatagramSocket(0, address);
+        PairLink.Lease lease = new PairLink.Lease()) {
+      require(LanDiscovery.collect(lease, sock, address, 8, 40).isEmpty());
+    }
     KeyStore ks = KeyStore.getInstance("PKCS12");
     try (InputStream f = new FileInputStream(args[0])) {
       ks.load(f, "fixturepass".toCharArray());

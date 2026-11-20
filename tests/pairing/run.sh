@@ -4,7 +4,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
 mkdir "$work/classes"
-javac --release 8 -d "$work/classes" apps/android/src/io/nodeport/link/PairLink.java tests/pairing/ProtocolSmoke.java
+javac --release 8 -d "$work/classes" apps/android/src/io/nodeport/link/{PairLink,LanDiscovery}.java tests/pairing/ProtocolSmoke.java
 # A throwaway test identity, never used by the app or to sign an APK.
 keytool -genkeypair -storetype PKCS12 -keystore "$work/test.p12" -alias host -keyalg EC \
     -dname CN=Test -validity 1 -storepass fixturepass -keypass fixturepass

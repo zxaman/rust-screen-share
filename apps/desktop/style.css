@@ -808,3 +808,5 @@ dialog p {
     gap: 16px;
   }
 }
+
+.demo-notice { padding: 10px 3vw; background: #fff8dc; color: #554812; font-size: 13px; }
