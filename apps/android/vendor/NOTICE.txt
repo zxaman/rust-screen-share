@@ -19,3 +19,7 @@ liability, whether in an action of contract, tort or otherwise, arising from,
 out of or in connection with the Software or the use or other dealings in the
 Software.
 
+
+QR decoding: ZXing core 3.4.1, copyright ZXing authors, Apache License 2.0.
+Unmodified QR-reader dependency subset from https://github.com/zxing/zxing/tree/zxing-3.4.1/core.
+See ZXING-LICENSE.txt in the app assets.

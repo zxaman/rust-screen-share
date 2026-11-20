@@ -65,6 +65,9 @@ type approval func(context.Context, string, string) bool
 // ctx is cancelled by the owner's Stop action. Closing both listener and current
 // socket unblocks accept, TLS handshake and reads, including while awaiting consent.
 func serve(ctx context.Context, l net.Listener, v invite, approve approval, volume func(string) error, active func(string)) error {
+	return serveWithScreen(ctx, l, v, approve, volume, active, nil)
+}
+func serveWithScreen(ctx context.Context, l net.Listener, v invite, approve approval, volume func(string) error, active func(string), screen *screenAdapter) error {
 	defer l.Close()
 	stop := context.AfterFunc(ctx, func() { l.Close() })
 	defer stop()
@@ -82,7 +85,19 @@ func serve(ctx context.Context, l net.Listener, v invite, approve approval, volu
 		r := bufio.NewReaderSize(conn, 128)
 		line, err := readLine(r)
 		parts := strings.Split(line, " ")
-		if err != nil || len(parts) != 3 || parts[0] != "NP1" || subtle.ConstantTimeCompare([]byte(parts[1]), []byte(v.secret)) != 1 || !isCode(parts[2]) || !time.Now().Before(expires) {
+		scope := "VOLUME"
+		valid := len(parts) == 3 && parts[0] == "NP1"
+		if len(parts) == 4 && parts[0] == "NP2" && screen != nil && (parts[3] == "SCREEN" || parts[3] == "SCREEN_CLICK") {
+			scope = parts[3]
+			valid = true
+		}
+		if err != nil || !valid || !isCode(parts[2]) || !time.Now().Before(expires) {
+			conn.Close()
+			cancel()
+			continue
+		}
+		if subtle.ConstantTimeCompare([]byte(parts[1]), []byte(v.secret)) != 1 {
+			fmt.Fprintln(conn, "BAD_INVITE")
 			conn.Close()
 			cancel()
 			continue
@@ -93,16 +108,26 @@ func serve(ctx context.Context, l net.Listener, v invite, approve approval, volu
 		timer.Stop() // consume the invitation, even if denied
 		prompt, closePrompt := context.WithDeadline(ctx, minTime(expires, time.Now().Add(30*time.Second)))
 		defer closePrompt()
-		allowed := approve(prompt, raw.RemoteAddr().String(), parts[2])
+		peer := raw.RemoteAddr().String()
+		var allowed bool
+		if scope == "VOLUME" {
+			allowed = approve(prompt, peer, parts[2])
+		} else {
+			allowed = screen.approve(prompt, peer, parts[2], scope)
+		}
 		conn.SetDeadline(time.Now().Add(3 * time.Second))
 		if !allowed || prompt.Err() != nil {
 			fmt.Fprintln(conn, "DENIED")
 			return errors.New("request denied or expired")
 		}
-		if _, err = fmt.Fprintln(conn, "APPROVED VOLUME"); err != nil {
+		if _, err = fmt.Fprintln(conn, "APPROVED "+scope); err != nil {
 			return err
 		}
-		active(raw.RemoteAddr().String())
+		if scope != "VOLUME" {
+			screen.started(peer, scope)
+			return screenLoop(ctx, conn, r, scope, screen)
+		}
+		active(peer)
 		end := time.Now().Add(sessionTTL)
 		var last time.Time
 		for {

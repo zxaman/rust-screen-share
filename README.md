@@ -1,28 +1,33 @@
-# Nodeport Link — discover and pair on your LAN
+# Nodeport Link — attended LAN pairing
 
-**Install Nodeport Link 0.3 on both devices.** This is a native Android app and a Windows console app, not the sample web dashboard. Both can host, list discoverable Nodeport hosts and request control. The **only** control currently implemented is media/playback volume up/down.
+**Install Link 0.4 on both devices.** This is the native client, not the web dashboard. The Windows host can now share its primary display with an Android viewer. The owner can approve viewing alone or explicitly approve viewing **and** left clicks. Volume remains a separate capability.
 
-| Platform | Download | What opens |
+| Platform | Download | Supported roles |
 | --- | --- | --- |
-| Android 9+ | [Download native Nodeport Link 0.3 APK](https://github.com/zxaman/rust-screen-share/raw/2c2bad368c3c4f978cfa113c1ecf28b268754bc3/downloads/Nodeport-Link-Android.apk) | **Nearby devices**, with **Scan for nearby devices** and **Receive a request** |
-| Windows 10/11 x64 | [Download native Nodeport Link 0.3 EXE](https://github.com/zxaman/rust-screen-share/raw/2c2bad368c3c4f978cfa113c1ecf28b268754bc3/downloads/Nodeport-Link-Windows-x64.exe) | **NODEPORT LINK 0.3**, with **Host**, **Scan** and **Connect directly** |
+| Android 9+ | [Download Nodeport Link 0.4 APK](https://github.com/zxaman/rust-screen-share/raw/refs/tags/v0.4.0-lan.1/downloads/Nodeport-Link-Android.apk) | QR scanner, LAN discovery, Windows screen viewer, optional tap-to-click; volume controller or volume host |
+| Windows 10/11 x64 | [Download Nodeport Link 0.4 EXE](https://github.com/zxaman/rust-screen-share/raw/refs/tags/v0.4.0-lan.1/downloads/Nodeport-Link-Windows-x64.exe) | QR invitation window, screen/click host; volume host or volume controller |
 
-[SHA-256 checksums](https://github.com/zxaman/rust-screen-share/raw/2c2bad368c3c4f978cfa113c1ecf28b268754bc3/downloads/LINK-SHA256SUMS.txt) · [Build instructions](packaging/README.md) · [Pairing, security and test details](packaging/link.md)
+[SHA-256 checksums](https://github.com/zxaman/rust-screen-share/raw/refs/tags/v0.4.0-lan.1/downloads/LINK-SHA256SUMS.txt) · [Build from source](packaging/README.md) · [Protocol and device test checklist](packaging/link.md)
 
-**Check the Android install:** The installer should say **Nodeport Link** (version `0.3.0-lan.1`, package `io.nodeport.link`). Tap **Open** from the installer to launch the app you just installed. **Nodeport Preview** (`io.nodeport.preview`) is a separate app and can still be on your home screen.
+Android package: `io.nodeport.link`, version `0.4.0-lan.1`. If Android rejects an update because the preview signer differs, uninstall the old **Nodeport Link** before installing. **Nodeport Preview** (`io.nodeport.preview`) is the separate simulated dashboard. The Windows executable is unsigned. Run it as a **normal user**, not as administrator.
 
-**Already installed a preview?** If you see “Workspace overview” or pre-filled device cards, you opened **Nodeport Preview**, not Link. Remove that app/launcher. If Android refuses to update an older **Link** APK due to its different preview signer, uninstall the old Link app before installing this build. The Windows EXE is not Authenticode-signed.
+### View a Windows PC from a phone
 
-### Try it with two devices
+1. Put both devices on the same trusted private LAN. On the **PC**, run the EXE, choose **1. Host**, choose the correct interface if prompted and leave the console open. A separate window shows the one-time QR; the console also prints its `NP1-` key.
+2. On **Android**, tap **Scan host QR with camera**, allow camera access and point at the **live QR on the PC**. Scanning fills the key field; it does not connect or grant access. Frames from the scanner are processed locally, not uploaded or recorded. Pasting the key works without camera permission.
+3. Choose **View Windows screen (no input)** or **View Windows screen + tap to click**. Compare the six digits on the two devices. The PC owner must choose **Yes** to the specific request. The whole primary display is visible to the viewer, so close sensitive content before approving.
+4. The phone displays low-rate JPEG frames (up to 960 × 720, approximately two per second, not video-rate streaming). Only an approved click session maps a tap on the displayed image to a single left click. To stop, use **Stop viewing** on Android, choose **OK** on the PC’s sharing indicator, or type `STOP` and press Enter in the host console.
 
-1. Put both on the same private IPv4 Wi-Fi/Ethernet LAN. On the **target**, tap **Receive a request** (Android) or choose **1. Host** (Windows). Choose the LAN interface if prompted. Keep the app open; the invitation lasts two minutes.
-2. On the **controller**, choose **Scan**. After four seconds the list shows names and addresses received on the selected subnet. Select the target. An empty list means no matching announcements arrived; it is never populated with sample devices. Scan again after starting a host.
-3. Enter the target’s private `NP1-` key. Compare the six digits on both screens. The target owner must approve the request. A discovered name is **not** proof of identity or permission.
-4. Use **Volume up/down** (Android) or type `UP` / `DOWN` (Windows). To end the session tap **Stop / disconnect**, or type `STOP` in the Windows console. Another session requires another key and approval.
+**Android as the host:** Tap **Host this phone · volume only** and keep Link in the foreground. The other phone can scan its live QR or paste its key, then request volume. Android **screen capture and remote touch control are not implemented**. Camera permission is only for scanning QR codes; it is not a screen-capture permission. Windows-to-Windows screen viewing, keyboard injection, drag, recording, file transfer and internet access are also not implemented.
 
-**If scan finds nothing:** Only actively inviting Link hosts advertise—not arbitrary phones, Bluetooth devices, or other PCs. Select the correct LAN rather than a VPN, and avoid guest networks with client isolation. Discovery uses local UDP broadcast on port 48173. If broadcasts are filtered, use **Connect directly** / enter the key without scanning. If direct pairing also fails, check that the key is fresh, both devices can reach each other and Windows allows the app on **private networks only**. Do not disable the firewall or forward ports.
+### If pairing or discovery fails
 
-Discovery and pairing have been exercised between the Java and Go implementations over real UDP and TLS sockets on loopback. Physical Android/Windows testing is still needed. Screen mirroring, desktop input, file transfer, and internet connectivity are not part of these builds.
+- **Blank QR:** scan the actual host display, not a screenshot. Android protects the invitation window against screenshots. Confirm an unexpired key appears below the code (or in the Windows console). Start a fresh invitation if it expired.
+- **Key rejected:** the entire 55-character `NP1-` key is case-sensitive. The six digits are for comparing the incoming request, **not** for entering as the key. Leaving the host app on Android, denying a request or stopping the host invalidates that invitation. A scanned list row must match the key’s IP and port.
+- **Empty nearby list:** first open a host invitation. Scan on the correct Wi-Fi/Ethernet interface. Link listens for **six seconds** for live advertisements: subnet broadcast and, when supported, link-local multicast (`239.255.43.73`, UDP 48173). Discovery never lists arbitrary phones, Bluetooth devices or sample devices. Camera/key pairing does **not** depend on seeing a row in discovery.
+- **Cannot reach the host even by QR:** guest/client isolation, firewall rules, VPN routing or different subnets can block connections. Windows must allow this app on the **private** network. Do not disable the firewall or forward ports. For support, give the host/controller OS versions, direction, app version and exact error message; **do not share the key or QR**.
+
+**Validation:** QR pixel round trips for both encoders through the actual Android decoder; Java/Go discovery and pinned-TLS interop; JPEG test frames, scoped click dispatch, denial and revocation. Physical camera autofocus, Windows desktop capture/input and device-specific Wi-Fi behavior still require real-device testing.
 
 ## Development-only dashboard example
 

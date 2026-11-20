@@ -11,7 +11,6 @@ import android.security.keystore.*;
 import android.text.InputType;
 import android.view.*;
 import android.widget.*;
-import io.nayuki.qrcodegen.QrCode;
 import java.io.IOException;
 import java.net.*;
 import java.security.*;
@@ -25,6 +24,8 @@ import javax.net.ssl.*;
 public final class LinkActivity extends Activity {
   private LinearLayout body;
   private TextView status;
+  private EditText keyField;
+  private LanDiscovery.Peer selectedPeer;
   private AlertDialog request;
   private PairLink.Lease lease;
   private final ExecutorService writes = Executors.newSingleThreadExecutor();
@@ -50,8 +51,10 @@ public final class LinkActivity extends Activity {
     return b;
   }
   private void page(String title) {
+    keyField = null;
+    selectedPeer = null;
     body.removeAllViews();
-    text("NODEPORT LINK 0.3   /   PRIVATE LAN", 13);
+    text("NODEPORT LINK 0.4   /   PRIVATE LAN", 13);
     text(title, 27);
   }
   @Override
@@ -71,18 +74,56 @@ public final class LinkActivity extends Activity {
     page("Nearby devices");
     if (!note.isEmpty())
       text(note, 16);
-    text("Connect both devices to the same private Wi-Fi or LAN. Only media volume can be changed. "
-            + "No screen, file or input access.",
+    text("Use the same private Wi-Fi or Ethernet LAN. A key requests access; the target owner must "
+         + "approve.",
         16);
-    button("Scan for nearby devices", () -> chooseInterface(true));
-    button("Receive a request · make this phone discoverable", () -> chooseInterface(false));
-    text("Control another phone or Windows PC", 19);
-    EditText key = new EditText(this);
-    key.setSingleLine();
-    key.setHint("Paste the owner’s NP1 device key");
-    key.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-    body.addView(key);
-    button("Request volume control", () -> join(key.getText().toString().trim()));
+    button("Find nearby hosts (LAN)", () -> chooseInterface(true));
+    button("Host this phone · volume only", () -> chooseInterface(false));
+    text("Connect to a host", 19);
+    connectionForm(null);
+  }
+  private void connectionForm(LanDiscovery.Peer peer) {
+    selectedPeer = peer;
+    button("Scan host QR with camera",
+        () -> startActivityForResult(new Intent(this, ScanActivity.class), 44));
+    keyField = new EditText(this);
+    keyField.setSingleLine();
+    keyField.setSaveEnabled(false);
+    keyField.setHint("Scan or paste the full NP1 key");
+    keyField.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+        | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+    body.addView(keyField);
+    button("Request volume only", () -> requestAccess("VOLUME"));
+    button("View Windows screen (no input)", () -> requestAccess("SCREEN"));
+    button("View Windows screen + tap to click", () -> requestAccess("SCREEN_CLICK"));
+  }
+  @Override
+  protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+    super.onActivityResult(requestCode, resultCode, data);
+    if (requestCode != 44 || resultCode != RESULT_OK || data == null || keyField == null)
+      return;
+    String key = data.getStringExtra("key");
+    if (!PairLink.validInvite(key) || (selectedPeer != null && !selectedPeer.matches(key))) {
+      keyField.setError("QR does not match this invitation. Rescan the current host.");
+      return;
+    }
+    keyField.setText(key);
+    Toast.makeText(this, "QR read. Choose the access you want to request.", Toast.LENGTH_LONG)
+        .show();
+  }
+  private void requestAccess(String scope) {
+    String key = PairLink.clean(keyField.getText().toString());
+    if (!PairLink.validInvite(key)) {
+      keyField.setError(
+          "Scan or paste all 55 characters including NP1-. Upper and lower case matter.");
+      return;
+    }
+    if (selectedPeer != null && !selectedPeer.matches(key)) {
+      keyField.setError(
+          "Key does not match this host and port. Refresh the scan or enter the key directly.");
+      return;
+    }
+    join(key, scope);
   }
   private PairLink.Lease begin(String title) {
     stop();
@@ -156,15 +197,10 @@ public final class LinkActivity extends Activity {
   }
   private void chooseInterface(boolean scan) {
     try {
-      List<InetAddress> ips = new ArrayList<>();
+      List<AndroidLan> ips = AndroidLan.all(this);
       List<String> names = new ArrayList<>();
-      for (NetworkInterface n : Collections.list(NetworkInterface.getNetworkInterfaces()))
-        if (n.isUp())
-          for (InetAddress a : Collections.list(n.getInetAddresses()))
-            if (a instanceof Inet4Address && a.isSiteLocalAddress()) {
-              ips.add(a);
-              names.add(n.getName() + " · " + a.getHostAddress());
-            }
+      for (AndroidLan lan : ips)
+        names.add(lan.label + " · " + lan.ip.getHostAddress() + "/" + lan.prefix);
       if (ips.isEmpty()) {
         home("No private IPv4 address. Connect to Wi-Fi first.");
         return;
@@ -190,10 +226,11 @@ public final class LinkActivity extends Activity {
       home("Could not read network interfaces.");
     }
   }
-  private void scan(InetAddress addr) {
+  private void scan(AndroidLan lan) {
+    InetAddress addr = lan.ip;
     PairLink.Lease l = begin("Scanning this LAN");
-    status.setText(
-        "Listening for four seconds. Only devices with an open Nodeport invitation appear.");
+    status.setText("Listening for 6 seconds on " + lan.label + " · " + addr.getHostAddress() + "/"
+        + lan.prefix + ". Keep the target on its invitation screen.");
     new Thread(() -> {
       WifiManager.MulticastLock lock = null;
       try {
@@ -202,20 +239,20 @@ public final class LinkActivity extends Activity {
           lock = wifi.createMulticastLock("nodeport-scan");
           lock.acquire();
         }
-        List<LanDiscovery.Peer> peers = LanDiscovery.scan(l, addr);
+        List<LanDiscovery.Peer> peers = LanDiscovery.scan(l, addr, lan.prefix, lan::bind);
         update(l, () -> {
           stop();
           page("Nearby devices");
           text(peers.isEmpty()
                   ? "No hosts found. Open Receive a request on the other device and keep it on the "
-                    + "same Wi-Fi. Guest networks may block discovery."
+                      + "same Wi-Fi. Guest networks may block discovery."
                   : "Seen on this LAN in the last scan. Select a host, then enter its private key.",
               16);
           for (LanDiscovery.Peer peer : peers)
             button(peer.name + " · " + peer.target.getAddress().getHostAddress() + ":"
                     + peer.target.getPort(),
                 () -> selected(peer));
-          button("Scan again", () -> scan(addr));
+          button("Scan again", () -> scan(lan));
           button("Back / enter key directly", () -> home(""));
         });
       } catch (Exception e) {
@@ -232,17 +269,7 @@ public final class LinkActivity extends Activity {
     text("Selected " + peer.target.getAddress().getHostAddress() + ":" + peer.target.getPort()
             + ". Ask the owner for this host’s NP1 key.",
         16);
-    EditText field = new EditText(this);
-    field.setSingleLine();
-    field.setHint("NP1 device key");
-    body.addView(field);
-    button("Request volume control", () -> {
-      String key = field.getText().toString().trim();
-      if (peer.matches(key))
-        join(key);
-      else
-        field.setError("Wrong invitation for this host. Check the key or scan again.");
-    });
+    connectionForm(peer);
     button("Back", () -> home(""));
   }
   private static synchronized KeyStore identity() throws Exception {
@@ -262,26 +289,21 @@ public final class LinkActivity extends Activity {
     return ks;
   }
   private void showCode(String key) {
-    QrCode qr = QrCode.encodeText(key, QrCode.Ecc.MEDIUM);
-    View image = new View(this) {
-      final Paint ink = new Paint();
-      @Override
-      protected void onDraw(Canvas c) {
-        int cell = Math.min(getWidth(), getHeight()) / (qr.size + 8);
-        int x = (getWidth() - cell * qr.size) / 2, y = (getHeight() - cell * qr.size) / 2;
-        c.drawColor(Color.WHITE);
-        ink.setColor(Color.BLACK);
-        for (int row = 0; row < qr.size; row++)
-          for (int col = 0; col < qr.size; col++)
-            if (qr.getModule(col, row))
-              c.drawRect(
-                  x + cell * col, y + cell * row, x + cell * (col + 1), y + cell * (row + 1), ink);
-      }
-    };
-    image.setContentDescription("QR code containing this temporary device key");
-    body.addView(image, new LinearLayout.LayoutParams(-1, dp(200)));
+    InviteQr.Image raster = new InviteQr.Image(key);
+    Bitmap bitmap =
+        Bitmap.createBitmap(raster.pixels, raster.side, raster.side, Bitmap.Config.ARGB_8888);
+    bitmap.setDensity(Bitmap.DENSITY_NONE);
+    ImageView image = new ImageView(this);
+    image.setScaleType(ImageView.ScaleType.FIT_CENTER);
+    image.setBackgroundColor(Color.WHITE);
+    if (Build.VERSION.SDK_INT >= 29)
+      image.setForceDarkAllowed(false);
+    image.setImageBitmap(bitmap);
+    image.setContentDescription("Private one-time invitation QR");
+    body.addView(image, new LinearLayout.LayoutParams(-1, dp(240)));
   }
-  private void host(InetAddress addr) {
+  private void host(AndroidLan lan) {
+    InetAddress addr = lan.ip;
     PairLink.Lease l = begin("Receive a request");
     worker(l, () -> {
       KeyStore ks = identity();
@@ -296,8 +318,8 @@ public final class LinkActivity extends Activity {
           int port = (payload[4] & 255) * 256 + (payload[5] & 255);
           new Thread(() -> {
             try {
-              LanDiscovery.advertise(
-                  l, available, addr, port, Build.MANUFACTURER + " " + Build.MODEL);
+              LanDiscovery.announce(l, available, addr, LanDiscovery.broadcast(addr, lan.prefix),
+                  port, Build.MANUFACTURER + " " + Build.MODEL, lan::bind);
             } catch (Exception e) {
               update(l, () -> text("Discovery unavailable. Use the private key instead.", 14));
             }
@@ -306,10 +328,11 @@ public final class LinkActivity extends Activity {
             progress("Your one-time device key",
                 "Valid for 2 minutes. Share privately with the operator. Keep this app open. You "
                     + "will be asked before access is granted. Switching apps stops this "
-                      + "invitation.");
+                    + "invitation.");
             showCode(key);
-            text("On the other phone: scan with its camera, copy the text, then paste it into "
-                    + "Nodeport Link.",
+            text("On the controller: tap Scan host QR with camera. Scan the live display, not a "
+                 + "screenshot (screenshots are protected). Host: "
+                    + addr.getHostAddress() + ":" + port,
                 14);
             TextView value = text(key, 18);
             value.setTextIsSelectable(true);
@@ -380,31 +403,55 @@ public final class LinkActivity extends Activity {
       });
     });
   }
-  private void join(String key) {
+  private void join(String key, String scope) {
     PairLink.Lease l = begin("Requesting access");
-    worker(l, () -> PairLink.join(l, key, new PairLink.Controller() {
-      public void pending(String code) {
-        update(l,
-            ()
-                -> progress("Waiting for approval",
-                    "Tell the owner your verification code: " + code
-                        + ". You have no access until they approve."));
-      }
-      public void active(PairLink.Lines io) {
-        update(l, () -> {
-          progress("Connected · volume control", "The owner approved media volume up/down only.");
-          button("Volume up", () -> send(l, io, "UP"));
-          button("Volume down", () -> send(l, io, "DOWN"));
-        });
-      }
-      public void result(String r) {
-        update(l,
-            ()
-                -> status.setText(r.equals("OK") ? "Volume request accepted."
-                        : r.equals("WAIT")       ? "Wait briefly before changing volume again."
-                                                 : "Device could not change volume."));
-      }
-    }));
+    DesktopViewer viewer = new DesktopViewer(this, l, scope.equals("SCREEN_CLICK"));
+    worker(l,
+        ()
+            -> PairLink.join(l, key, scope,
+                (sock, peer)
+                    -> AndroidLan.route(this, sock, peer),
+                new PairLink.ScreenController() {
+                  public void frame(byte[] image) throws Exception {
+                    viewer.frame(image);
+                  }
+                  public String takeClick() {
+                    return viewer.pending.getAndSet(null);
+                  }
+                  public void pending(String code) {
+                    update(l,
+                        ()
+                            -> progress("Waiting for approval",
+                                "Tell the owner your verification code: " + code
+                                    + ". You have no access until they approve."));
+                  }
+                  public void active(PairLink.Lines io) {
+                    update(l, () -> {
+                      if (!scope.equals("VOLUME")) {
+                        page("Windows primary display");
+                        text(scope.equals("SCREEN_CLICK")
+                                ? "Tap the image to left-click. No keyboard access."
+                                : "View only · input is disabled.",
+                            15);
+                        button("Stop viewing", () -> finishSession("Disconnected."));
+                        body.addView(viewer.create(), new LinearLayout.LayoutParams(-1, dp(340)));
+                        return;
+                      }
+                      progress("Connected · volume control",
+                          "The owner approved media volume up/down only.");
+                      button("Volume up", () -> send(l, io, "UP"));
+                      button("Volume down", () -> send(l, io, "DOWN"));
+                    });
+                  }
+                  public void result(String r) {
+                    update(l,
+                        ()
+                            -> status.setText(r.equals("OK") ? "Volume request accepted."
+                                    : r.equals("WAIT")
+                                    ? "Wait briefly before changing volume again."
+                                    : "Device could not change volume."));
+                  }
+                }));
   }
   private void send(PairLink.Lease l, PairLink.Lines io, String command) {
     writes.execute(() -> {

@@ -139,7 +139,7 @@ public final class ProtocolSmoke {
       try {
         control(key);
         throw new AssertionError("consumed key reused");
-      } catch (ConnectException expected) {
+      } catch (IOException expected) { require(expected.getCause() instanceof ConnectException);
       }
     }
     System.out.println(

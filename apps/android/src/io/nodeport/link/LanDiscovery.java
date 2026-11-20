@@ -24,14 +24,6 @@ final class LanDiscovery {
           && ((data[4] & 255) * 256 + (data[5] & 255)) == target.getPort();
     }
   }
-  static InterfaceAddress network(InetAddress local) throws IOException {
-    NetworkInterface nic = NetworkInterface.getByInetAddress(local);
-    if (nic != null)
-      for (InterfaceAddress a : nic.getInterfaceAddresses())
-        if (local.equals(a.getAddress()) && a.getBroadcast() != null)
-          return a;
-    throw new IOException("No broadcast-capable network. Try the direct key instead.");
-  }
   static boolean sameNetwork(InetAddress local, InetAddress source, int bits) {
     if (!(source instanceof Inet4Address) || !(local instanceof Inet4Address) || bits < 1
         || bits > 32 || local.equals(source))
@@ -54,13 +46,29 @@ final class LanDiscovery {
     int port = Integer.parseInt(p[1]);
     return port > 65535 ? null : new Peer(packet.getAddress(), port, p[2]);
   }
-  static List<Peer> scan(PairLink.Lease lease, InetAddress local) throws IOException {
-    InterfaceAddress lan = network(local);
-    DatagramSocket sock = lease.track(new DatagramSocket(null));
+  interface Bind {
+    void socket(DatagramSocket s) throws IOException;
+  }
+  static InetAddress broadcast(InetAddress ip, int prefix) throws IOException {
+    if (!(ip instanceof Inet4Address) || prefix < 1 || prefix > 30)
+      throw new IOException("This interface has no broadcast subnet. Use the QR or direct key.");
+    byte[] b = ip.getAddress();
+    for (int bit = prefix; bit < 32; bit++) b[bit / 8] |= (byte) (128 >>> (bit % 8));
+    return InetAddress.getByAddress(b);
+  }
+  static List<Peer> scan(PairLink.Lease lease, InetAddress local, int prefix, Bind bind)
+      throws IOException {
+    MulticastSocket sock = lease.track(new MulticastSocket(null));
     try {
       sock.setReuseAddress(true);
       sock.bind(new InetSocketAddress(PORT));
-      return collect(lease, sock, local, lan.getNetworkPrefixLength(), 4000);
+      bind.socket(sock);
+      try {
+        sock.joinGroup(
+            new InetSocketAddress("239.255.43.73", PORT), NetworkInterface.getByInetAddress(local));
+      } catch (IOException unsupported) { /* broadcast remains available */
+      }
+      return collect(lease, sock, local, prefix, 6000);
     } finally {
       lease.discard(sock);
     }
@@ -84,12 +92,12 @@ final class LanDiscovery {
     }
     return new ArrayList<>(peers.values());
   }
-  static void advertise(PairLink.Lease lease, AtomicBoolean open, InetAddress local, int port,
-      String name) throws Exception {
-    announce(lease, open, local, network(local).getBroadcast(), port, name);
-  }
   static void announce(PairLink.Lease lease, AtomicBoolean open, InetAddress local,
       InetAddress broadcast, int port, String name) throws Exception {
+    announce(lease, open, local, broadcast, port, name, s -> {});
+  }
+  static void announce(PairLink.Lease lease, AtomicBoolean open, InetAddress local,
+      InetAddress broadcast, int port, String name, Bind bind) throws Exception {
     String label = name.replaceAll("[^a-zA-Z0-9._ -]", "_").trim();
     if (label.isEmpty())
       label = "Nodeport";
@@ -97,12 +105,41 @@ final class LanDiscovery {
       label = label.substring(0, 48);
     byte[] msg = ("NP-HOST/1 " + port + " " + label).getBytes(StandardCharsets.US_ASCII);
     DatagramPacket p = new DatagramPacket(msg, msg.length, broadcast, PORT);
-    DatagramSocket sock = lease.track(new DatagramSocket(new InetSocketAddress(local, 0)));
+    MulticastSocket sock = lease.track(new MulticastSocket(new InetSocketAddress(local, 0)));
     try {
+      bind.socket(sock);
       sock.setBroadcast(true);
+      DatagramPacket mc =
+          new DatagramPacket(msg, msg.length, InetAddress.getByName("239.255.43.73"), PORT);
+      boolean multicast = true;
+      try {
+        NetworkInterface nic = NetworkInterface.getByInetAddress(local);
+        if (nic == null)
+          multicast = false;
+        else {
+          sock.setNetworkInterface(nic);
+          sock.setTimeToLive(1);
+        }
+      } catch (IOException e) {
+        multicast = false;
+      }
       long end = PairLink.now() + PairLink.INVITE_MS;
       while (!lease.closed && open.get() && PairLink.now() < end) {
-        sock.send(p);
+        boolean sent = false;
+        try {
+          sock.send(p);
+          sent = true;
+        } catch (IOException e) {
+          if (!multicast)
+            throw e;
+        }
+        if (multicast)
+          try {
+            sock.send(mc);
+          } catch (IOException e) {
+            if (!sent)
+              throw e;
+          }
         Thread.sleep(750);
       }
     } finally {

@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -51,18 +52,57 @@ func broadcast(lan *net.IPNet) net.IP {
 	}
 	return ip
 }
+
+// The same bounded, non-secret beacon on a second, link-local transport.
+// On systems without multicast support direct broadcast remains usable.
+var group = net.IPv4(239, 255, 43, 73)
+
+func configureGroup(c *net.UDPConn, ip net.IP, receive bool) error {
+	rc, err := c.SyscallConn()
+	if err != nil {
+		return err
+	}
+	var optionErr error
+	err = rc.Control(func(fd uintptr) {
+		h := socketHandle(fd)
+		addr := [4]byte(ip.To4())
+		if receive {
+			m := syscall.IPMreq{Multiaddr: [4]byte(group.To4()), Interface: addr}
+			optionErr = syscall.SetsockoptIPMreq(h, syscall.IPPROTO_IP, syscall.IP_ADD_MEMBERSHIP, &m)
+		} else {
+			optionErr = syscall.SetsockoptInet4Addr(h, syscall.IPPROTO_IP, syscall.IP_MULTICAST_IF, addr)
+			if optionErr == nil {
+				optionErr = syscall.SetsockoptInt(h, syscall.IPPROTO_IP, syscall.IP_MULTICAST_TTL, 1)
+			}
+		}
+	})
+	if err != nil {
+		return err
+	}
+	return optionErr
+}
 func advertise(ctx context.Context, lan *net.IPNet, port int, name string) error {
-	c, e := net.DialUDP("udp4", &net.UDPAddr{IP: lan.IP}, &net.UDPAddr{IP: broadcast(lan), Port: discoveryPort})
+	c, e := net.ListenUDP("udp4", &net.UDPAddr{IP: lan.IP})
 	if e != nil {
 		return e
 	}
 	defer c.Close()
 	payload := beacon(port, name)
+	multicast := configureGroup(c, lan.IP, false) == nil
+	bc := &net.UDPAddr{IP: broadcast(lan), Port: discoveryPort}
+	mc := &net.UDPAddr{IP: group, Port: discoveryPort}
 	ticker := time.NewTicker(750 * time.Millisecond)
 	defer ticker.Stop()
 	for ctx.Err() == nil {
 		c.SetWriteDeadline(time.Now().Add(time.Second))
-		if _, e = c.Write(payload); e != nil {
+		_, e = c.WriteToUDP(payload, bc)
+		if multicast {
+			_, me := c.WriteToUDP(payload, mc)
+			if me == nil {
+				e = nil
+			}
+		}
+		if e != nil {
 			return e
 		}
 		select {
@@ -103,5 +143,6 @@ func scan(lan *net.IPNet) ([]peer, error) {
 		return nil, e
 	}
 	defer c.Close()
-	return collect(c, lan, 4*time.Second)
+	_ = configureGroup(c, lan.IP, true)
+	return collect(c, lan, 6*time.Second)
 }
