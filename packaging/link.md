@@ -1,6 +1,12 @@
 # Nodeport Link · LAN pairing milestone
 
-The `Link` downloads are native clients, separate from the original HTML dashboard. Android is both a controller and a host. Windows x64 is a host. Only media/playback volume is implemented. There is no relay server, device directory, remote shell, screen capture, accessibility service, unattended mode or permanent trust list.
+The `Link` downloads are native clients, separate from the original HTML dashboard. Android and Windows x64 can each act as a controller or host. Only media/playback volume is implemented. There is no relay server, device directory, remote shell, screen capture, accessibility service, unattended mode or permanent trust list.
+
+## Nearby devices
+
+While waiting for a request, the host advertises its OS-reported hostname/model and current TCP port every 750 ms to the selected interface’s IPv4 broadcast address on UDP 48173. No secret, certificate pin, approval code, or stored device ID goes into a beacon. Advertising ends on consumption, stop, or expiry. Scanning passively listens for four seconds (Android takes a temporary Wi-Fi multicast lock), filters malformed/off-subnet/self traffic, deduplicates by source IP and port, and returns up to 32 results. A rescan starts empty. This is a snapshot, not a permanent trusted-devices list.
+
+Treat every label as unverified. When connecting from the list, both clients check the key’s endpoint against the selected row before opening the pinned TLS connection. Direct key pairing still works without broadcast. Do not send private keys in discovery packets.
 
 ## What the key does
 
@@ -18,15 +24,16 @@ The Windows host uses the Go standard library for TLS and Win32/Core Audio APIs.
 (cd apps/pairing/windows && CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o ../../../downloads/Nodeport-Link-Windows-x64.exe .)
 ```
 
-The Android app uses native Java APIs. Set up the SDK/JDK and your **own** keystore as in [the Android packaging guide](README.md#android-linuxmacos), then run `./packaging/build-android.sh link`. Install `dist/Nodeport-Link-Android.apk`; its package ID is `io.nodeport.link`, distinct from the old demo. No camera permission is needed: scan a host QR with the controller phone’s system camera or enter the key manually. The QR encoder is [Nayuki’s QR Code generator v1.8.0](https://github.com/nayuki/QR-Code-generator/tree/v1.8.0/java) (MIT; notices in `apps/android/vendor/`). The downloadable APK is preview-signed, not Play-distributed; its signer SHA-256 is `3c994fd8b7c33310efb1cf81512d75c91aba5265300915ee13321c4f935aa99a`. To install a future build signed by another key, uninstall this one first. The Windows executable is not Authenticode-signed.
+The Android app uses native Java APIs. Set up the SDK/JDK and your **own** keystore as in [the Android packaging guide](README.md#android-linuxmacos), then run `./packaging/build-android.sh link`. Install `dist/Nodeport-Link-Android.apk`; its package ID is `io.nodeport.link`, distinct from the old demo. No camera permission is needed: scan a host QR with the controller phone’s system camera or enter the key manually. The QR encoder is [Nayuki’s QR Code generator v1.8.0](https://github.com/nayuki/QR-Code-generator/tree/v1.8.0/java) (MIT; notices in `apps/android/vendor/`). The downloadable APK is preview-signed, not Play-distributed; its signer SHA-256 is `6ca760601fab35c59f6bd61e536f55dd34d42e63ce4e09471c70b66f06cae9b6`. To install a future build signed by another key, uninstall this one first. The Windows executable is not Authenticode-signed.
 
 ## Tests and physical-device acceptance
 
 `tests/pairing/run.sh` exercises Java↔Java and Java→Go interoperability using actual TLS sockets on loopback, disposable certificates, and a test volume adapter. It checks pin and secret mismatches, allow/deny, single-use, revocation and a scoped operation. `go test` in `apps/pairing/windows` runs the standalone host tests without a JDK. These are not Android UI or Windows audio-driver tests.
 
-For physical acceptance, run the following twice: Android controller → Android host, then Android controller → Windows host:
+For physical acceptance, exercise phone and PC as both controller and host:
 
 - Join the same trusted non-guest LAN. Select the interface connected to it. If prompted by Windows Firewall, allow this app on **private networks only**. Do not disable the firewall or forward ports.
+- Start a host, scan from the other device, and select the actual advertised endpoint. With the host stopped and no other hosts present, rescan and verify the list is empty.
 - Enter a fresh device key. Confirm the owner sees the request, denies it, and the controller cannot change the volume or reuse that key.
 - Generate a new key; compare the six digits, approve, and use both volume buttons. Observe the actual host volume (not just the controller acknowledgement).
 - Stop on the host; verify further changes are impossible. On Android, repeat by backgrounding the host. Let an invitation expire and confirm it cannot pair.

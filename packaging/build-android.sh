@@ -9,7 +9,7 @@ bt="$ANDROID_HOME/build-tools/${BUILD_TOOLS_VERSION:-35.0.0}"
 platform="$ANDROID_HOME/platforms/android-35/android.jar"
 work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
 mkdir -p "$work"/{assets,classes,dex} dist
-case "${1:-demo}" in
+case "${1:-link}" in
   link)
     cp apps/android/vendor/NOTICE.txt "$work/assets/NOTICE.txt"
     manifest=apps/android/LinkManifest.xml
@@ -19,7 +19,7 @@ case "${1:-demo}" in
     python3 packaging/bundle.py "$work/assets/workspace.html"
     manifest=apps/android/AndroidManifest.xml
     sources=(apps/android/src/io/nodeport/preview/*.java)
-    artifact=dist/Nodeport-Android.apk ;;
+    artifact=dist/Nodeport-SIMULATED-Dashboard.apk ;;
   *) echo "Usage: $0 [link|demo]" >&2; exit 2 ;;
 esac
 javac -source 8 -target 8 -classpath "$platform" -d "$work/classes" "${sources[@]}"

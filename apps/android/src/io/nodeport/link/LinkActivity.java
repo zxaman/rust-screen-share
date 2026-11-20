@@ -5,6 +5,7 @@ import android.app.AlertDialog;
 import android.content.*;
 import android.graphics.*;
 import android.media.AudioManager;
+import android.net.wifi.WifiManager;
 import android.os.*;
 import android.security.keystore.*;
 import android.text.InputType;
@@ -17,6 +18,7 @@ import java.security.*;
 import java.security.spec.ECGenParameterSpec;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import javax.net.ssl.*;
 
 /** Foreground-only native pairing surface. Nothing listens until the owner taps Host. */
@@ -49,7 +51,7 @@ public final class LinkActivity extends Activity {
   }
   private void page(String title) {
     body.removeAllViews();
-    text("NODEPORT   /   PRIVATE LAN", 13);
+    text("NODEPORT LINK 0.3   /   PRIVATE LAN", 13);
     text(title, 27);
   }
   @Override
@@ -66,13 +68,14 @@ public final class LinkActivity extends Activity {
     home("");
   }
   private void home(String note) {
-    page("Device pairing");
+    page("Nearby devices");
     if (!note.isEmpty())
       text(note, 16);
     text("Connect both devices to the same private Wi-Fi or LAN. Only media volume can be changed. "
-         + "No screen, file or input access.",
+            + "No screen, file or input access.",
         16);
-    button("Receive a request on this phone", () -> chooseInterface());
+    button("Scan for nearby devices", () -> chooseInterface(true));
+    button("Receive a request · make this phone discoverable", () -> chooseInterface(false));
     text("Control another phone or Windows PC", 19);
     EditText key = new EditText(this);
     key.setSingleLine();
@@ -151,7 +154,7 @@ public final class LinkActivity extends Activity {
       });
     }, "Nodeport link").start();
   }
-  private void chooseInterface() {
+  private void chooseInterface(boolean scan) {
     try {
       List<InetAddress> ips = new ArrayList<>();
       List<String> names = new ArrayList<>();
@@ -167,16 +170,80 @@ public final class LinkActivity extends Activity {
         return;
       }
       if (ips.size() == 1) {
-        host(ips.get(0));
+        if (scan)
+          scan(ips.get(0));
+        else
+          host(ips.get(0));
         return;
       }
       new AlertDialog.Builder(this)
           .setTitle("Choose a private LAN")
-          .setItems(names.toArray(new String[0]), (d, i) -> host(ips.get(i)))
+          .setItems(names.toArray(new String[0]),
+              (d, i) -> {
+                if (scan)
+                  scan(ips.get(i));
+                else
+                  host(ips.get(i));
+              })
           .show();
     } catch (Exception e) {
       home("Could not read network interfaces.");
     }
+  }
+  private void scan(InetAddress addr) {
+    PairLink.Lease l = begin("Scanning this LAN");
+    status.setText(
+        "Listening for four seconds. Only devices with an open Nodeport invitation appear.");
+    new Thread(() -> {
+      WifiManager.MulticastLock lock = null;
+      try {
+        WifiManager wifi = (WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
+        if (wifi != null) {
+          lock = wifi.createMulticastLock("nodeport-scan");
+          lock.acquire();
+        }
+        List<LanDiscovery.Peer> peers = LanDiscovery.scan(l, addr);
+        update(l, () -> {
+          stop();
+          page("Nearby devices");
+          text(peers.isEmpty()
+                  ? "No hosts found. Open Receive a request on the other device and keep it on the "
+                    + "same Wi-Fi. Guest networks may block discovery."
+                  : "Seen on this LAN in the last scan. Select a host, then enter its private key.",
+              16);
+          for (LanDiscovery.Peer peer : peers)
+            button(peer.name + " · " + peer.target.getAddress().getHostAddress() + ":"
+                    + peer.target.getPort(),
+                () -> selected(peer));
+          button("Scan again", () -> scan(addr));
+          button("Back / enter key directly", () -> home(""));
+        });
+      } catch (Exception e) {
+        update(l,
+            () -> finishSession("Discovery failed: " + e.getMessage() + ". Try the direct key."));
+      } finally {
+        if (lock != null && lock.isHeld())
+          lock.release();
+      }
+    }, "Nodeport nearby scan").start();
+  }
+  private void selected(LanDiscovery.Peer peer) {
+    page(peer.name);
+    text("Selected " + peer.target.getAddress().getHostAddress() + ":" + peer.target.getPort()
+            + ". Ask the owner for this host’s NP1 key.",
+        16);
+    EditText field = new EditText(this);
+    field.setSingleLine();
+    field.setHint("NP1 device key");
+    body.addView(field);
+    button("Request volume control", () -> {
+      String key = field.getText().toString().trim();
+      if (peer.matches(key))
+        join(key);
+      else
+        field.setError("Wrong invitation for this host. Check the key or scan again.");
+    });
+    button("Back", () -> home(""));
   }
   private static synchronized KeyStore identity() throws Exception {
     KeyStore ks = KeyStore.getInstance("AndroidKeyStore");
@@ -223,14 +290,26 @@ public final class LinkActivity extends Activity {
       SSLContext tls = SSLContext.getInstance("TLS");
       tls.init(km.getKeyManagers(), null, PairLink.RANDOM);
       PairLink.host(l, addr, tls, ks.getCertificate(ALIAS).getEncoded(), new PairLink.Host() {
+        private final AtomicBoolean available = new AtomicBoolean(true);
         public void invite(String key) {
+          byte[] payload = Base64.getUrlDecoder().decode(key.substring(4));
+          int port = (payload[4] & 255) * 256 + (payload[5] & 255);
+          new Thread(() -> {
+            try {
+              LanDiscovery.advertise(
+                  l, available, addr, port, Build.MANUFACTURER + " " + Build.MODEL);
+            } catch (Exception e) {
+              update(l, () -> text("Discovery unavailable. Use the private key instead.", 14));
+            }
+          }, "Nodeport beacon").start();
           update(l, () -> {
             progress("Your one-time device key",
                 "Valid for 2 minutes. Share privately with the operator. Keep this app open. You "
-                + "will be asked before access is granted.");
+                    + "will be asked before access is granted. Switching apps stops this "
+                      + "invitation.");
             showCode(key);
             text("On the other phone: scan with its camera, copy the text, then paste it into "
-                 + "Nodeport Link.",
+                    + "Nodeport Link.",
                 14);
             TextView value = text(key, 18);
             value.setTextIsSelectable(true);
@@ -246,6 +325,7 @@ public final class LinkActivity extends Activity {
           });
         }
         public boolean approve(String peer, String code, long deadline) throws Exception {
+          available.set(false);
           CompletableFuture<Boolean> decision = new CompletableFuture<>();
           update(l, () -> {
             progress("Incoming pair request", "Waiting for your decision.");
